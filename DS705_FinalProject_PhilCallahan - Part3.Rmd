@@ -1,0 +1,665 @@
+---
+title: "DS_705 Final Project"
+author: "Phil Callahan"
+date: "6/20/2020"
+output: word_document
+---
+
+All libraries are loaded here.
+```{r, message=FALSE, warning=FALSE, results='hide'}
+library(readr)
+library(ggformula)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(lattice)
+library(wesanderson) #color palette
+loans = read.csv("loans50k.csv") #read in loans dataset
+```
+Next we can take our initial look at the data.
+```{r, echo=FALSE, results="hide"}
+summary(loans) #summarizes data frame
+loan_header <- head(loans, 6) #gives first 6 rows
+loan_header
+```
+
+#Part1 - Section 3, Bullet 1,2
+This code removes uneeded columns and creates the new variable status2 which defines Good or Bad loans based on status column.
+NOTE: removed bcRatio because the other categories from which it is derived are still in the dataset: total credit card balance to total credit card limits. Additionally it has a large amount of NAs. See accompanying report for further justifications.
+```{r}
+#we'll use mutate to create the dataframe we want for the predictors
+loan_predictors <- loans %>%
+  select(-loanID, -employment, -bcRatio) %>% #removes uneeded columns
+  #conditionals for assignment to "Good", "Bad", NA
+  mutate(status2= ifelse(status == "Fully Paid", "Good",
+                   ifelse(status == "Charged Off" | status == "Default", 
+                          "Bad", NA)))%>%
+  select(1:status, status2, everything()) #puts status2 col next to old status col for easy comparison
+
+#head(loan_predictors) #test print
+```
+Next, we'll create a plot to show what we just did for the report.
+```{r, fig.width=8, fig.height=4}
+#this code gives a good summary of the consolidated rows
+p1 <- ggplot(data=loans, aes(x=status)) + 
+      geom_bar(fill= c("azure3", "#F21A00", "azure3", "#F21A00",
+                       "#3B9AB2", "#ccd5dd", "azure3", "azure3"))+
+      xlab("status Variable")+
+      ylab("Counts")+
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p2 <- ggplot(data=loan_predictors, aes(x=status2)) + 
+      geom_bar(fill= c("#F21A00", "#3B9AB2", "azure3")) + 
+      xlab("status2 Variable") +
+      ylab("Counts")+
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p1,p2,ncol=2, top = textGrob("Side by Side of Consolidation of Status Variable"))
+```
+Using the summary function we are able to explore ancillary values. 
+```{r, results='hide'}
+summary(loan_predictors)
+```
+Notice about 19 rows have only one NA which is a good indicator that it's the same row. We'll run code to eliminate the NAs from our new status2 variable and see if it fixes the issue.
+```{r, results='hide'}
+#remove all rows with NAs in status2 from data frame since they are not to be included in the data
+#leaving only Good and Bad loans
+NAstatus2 <- which(is.na(loan_predictors$status2))
+# NAstatus2[1:100]
+# length(NAstatus2) #troubleshooting print
+
+loan_predictors2 <- loan_predictors[-NAstatus2,] #remove row w NAs
+summary(loan_predictors2) #check summary again
+nrow(loan_predictors2) #counts rows left in dataset
+```
+The previous code DID eliminate the abberant row with NAs throughout since it was classified as neither Good nor Bad. Also note that we reduced the sample size down from 50,000 to 34,655. We'll have to be cognizant moving forward what rows we eliminate, though 34,655 is still a robust sample size.  
+
+#Part1 - Section 3, Bullet 3
+Next we'll consolidate categorical variables with only a few counts and lump together.
+```{r}
+#we'll use mutate to create the dataframe we want for the predictors
+loan_predictors3 <- loan_predictors2 %>%
+  #conditionals for feature engineering, consolidate "reason" variable
+  mutate(reason2= ifelse(reason=="major_purchase"|reason=="car"|reason=="house"|
+                           reason=="vacation"|reason=="moving"|reason=="medical"|
+                           reason=="renewable_energy"|reason=="small_business"|
+                           reason=="wedding"|reason=="other", "other",
+                          ifelse(reason == "credit_card", "credit_card",
+                          ifelse(reason == "debt_consolidation", "debt_consolidation",
+                          ifelse(reason == "home_improvement", "home_improvement", NA)))))%>%
+  select(1:status, status2, reason, reason2, everything()) #puts new cols next to old respective partner cols for easy comparison
+
+summary(loan_predictors3$reason2) #check that reason2 was made
+```
+Next we'll convert the converted cols from char to factors for consistency.
+```{r}
+loan_predictors3 <- loan_predictors3 %>%
+  #mutate to convert chars in status2 and reason2 to factors
+  mutate(reason2=as.factor(reason2), 
+         status2=as.factor(status2)) 
+#keeps everything cleaner when using summary(), can easily see counts
+
+summary(loan_predictors3$reason2) #test print
+summary(loan_predictors3$status2) #test print
+```
+Next we'll make some summary plots for the report to quicky summarize what was done in the prior few steps.
+```{r, fig.width=10, fig.height=5}
+p5 <- ggplot(data=loan_predictors2, aes(x=reason)) + 
+      geom_bar(fill= c("azure3","#F21A00","#3B9AB2","#E1AF00",
+                       "azure3","azure3","azure3","azure3",
+                       "azure3","azure3","azure3","azure3",
+                       "azure3"))+
+      xlab("reason Variable")+
+      ylab("Counts")+
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p6 <- ggplot(data=loan_predictors3, aes(x=reason2)) + 
+      geom_bar(fill= c("#F21A00", "#3B9AB2", "#E1AF00", "azure3")) + 
+      xlab("reason2 Variable") +
+      ylab("Counts")+
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p5,p6,ncol=2, top = textGrob("Side by Side of Consolidation of Reason Variable"))
+```
+#Part1 - Section 3, Bullet 4
+Next we'll remove aberant NAs concentrated in variables (i.e. bcOpen and revolRatio). Count NAs for revolRatio, for instance, is so small we can just delete the rows with NAs without attempting imputation since our data set is so large (347/50000 ≈ 1%).
+```{r,  results=FALSE}
+NAind <- which(is.na(loan_predictors3$revolRatio) | is.na(loan_predictors3$bcOpen)) #capture all rows with NA in revolRatio
+NAind[1:100] #quick look at first 100 results of the vector of NA indices
+length(NAind) #check length of the vector
+```
+
+```{r}
+#remove entire rows containing NAs in revolRatio and bcOpen
+loan_predictors4 <- loan_predictors3[-NAind,] #save as a new dataframe
+```
+
+```{r}
+#check summary to make sure NAs removed from new var loan_predictors4
+NA_cols <- c("revolRatio", "bcOpen")
+summary(loan_predictors4[NA_cols])
+#NAs removed
+nrow(loan_predictors4) #make sure tally makes sense
+```
+No longer NAs in revolRatio and bcOpen confirming removal.
+
+#Part1 - Section 4, Bullet 1
+With a clean data frame we can begin transforming the data and preparing it for logistic regression model.
+
+Income predictor variable displays right skewness, we can explore further with a boxplot
+```{r, fig.show='hide'}
+#we'll go down the list and see which variables (if any) display skewness then transform them if possible
+#income appears to be the first variable displaying skewness
+boxplot(loan_predictors4$income,
+        main="Boxplot of Income") #find any extreme outliers
+maxIncome_ind <- which(loan_predictors4$income == max(loan_predictors4$income)) #find index of the max outlier
+maxIncome_ind #test print index of max value
+loan_predictors4$income[maxIncome_ind] #test print value of max value index to make sure it makes sense
+```
+The boxplot displays one extremely high outlier so we'll remove the entire row because someone making $7 million a year is to extreme to include as a predictor. Digging further, they also are a registered nurse and still rent. I suppose it *could* be possible they're making that much but it's very likely an entry error. Regardless we'll remove the entire row.
+```{r}
+#remove row of likely entry error for income
+loan_predictors5 <- loan_predictors4[-maxIncome_ind,]
+```
+Recheck skewness to see if the outlier removal made a difference.
+```{r, fig.show='hide'}
+hist(loan_predictors5$income,
+     main="Histogram of Income (Skewed)")
+boxplot(loan_predictors5$income,
+        main="Boxplot of Income (Skewed)")
+```
+
+The data looks better without that extreme outlier but is still skewed; this can be remedied by taking the log of the vector.
+```{r}
+income_unskewed <- log(loan_predictors5$income)
+hist(income_unskewed,
+     main="Histogram of Income (Unskewed)",
+     xlab="log of Income")
+
+```
+
+We can then insert the newly created, unskewed data back into a new dataframe.
+```{r}
+loan_predictors6 <- add_column(loan_predictors5, income_unskewed, .after="income") #add_column comes from the tibble package
+income_cols <- c("income", "income_unskewed")
+summary(loan_predictors6[income_cols]) #test print
+```
+```{r}
+#put the graphs side by side to see difference
+bins7 <- seq(0,400000,by=20000)
+bins8 <- seq(8,14,by=.5)
+p7 <- ggplot(data=loan_predictors5, aes(x=income)) + 
+      geom_histogram(fill= "#3B9AB2", breaks=bins7)+
+      xlab("Income")+
+      ylab("Counts")+
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+p8 <- ggplot(data=loan_predictors6, aes(x=income_unskewed)) + 
+      geom_histogram(fill= "#3B9AB2", breaks=bins8) + 
+      xlab("Income (Unskewed)") +
+      ylab("Counts")+
+      theme(axis.text.x=element_text(angle=90, hjust=1, vjust=0))
+grid.arrange(p7,p8,ncol=2, top = textGrob("Removing Skewness of Income Variable"))
+```
+Now we can repeat this process for the remaining 14 variables identified as having a positive skew.
+
+delinq2yr
+inq6mth
+openAcc
+pubRec
+totalAcc
+totalBal
+totalRevLim
+accOpen24
+avgBal
+bcOpen
+totalLim
+totalRevBal
+totalBcLim
+totalIlLim
+
+```{r, fig.show='hide'}
+#vars identified with strong positive skew, use logarithmic transformation (and +1 if necessary)...
+delinq2yr_unskewed <- log(loan_predictors6$delinq2yr+1) #added "+1" to avoid -Inf later
+inq6mth_unskewed <- log(loan_predictors6$inq6mth+1) 
+openAcc_unskewed <- log(loan_predictors6$openAcc)
+pubRec_unskewed <- log(loan_predictors6$pubRec+1) #added "+1" to avoid -Inf
+totalAcc_unskewed <- log(loan_predictors6$totalAcc)
+totalBal_unskewed <- log(loan_predictors6$totalBal+1) #added "+1" to avoid -Inf
+totalRevLim_unskewed <- log(loan_predictors6$totalRevLim)
+accOpen24_unskewed <- log(loan_predictors6$accOpen24+1) #added "+1" to avoid -Inf
+avgBal_unskewed <- log(loan_predictors6$avgBal+1) #added "+1" to avoid -Inf
+bcOpen_unskewed <- log(loan_predictors6$bcOpen+1) #added "+1" to avoid -Inf
+totalLim_unskewed <- log(loan_predictors6$totalLim)
+totalRevBal_unskewed <- log(loan_predictors6$totalRevBal+1) #added "+1" to avoid -Inf
+totalBcLim_unskewed <- log(loan_predictors6$totalBcLim+1) #added "+1" to avoid -Inf
+totalIlLim_unskewed <- log(loan_predictors6$totalIlLim+1) #added "+1" to avoid -Inf
+
+#use as dummy code for quick check of skewness of transformation
+hist(delinq2yr_unskewed,
+     main="Histogram of XXX (Unskewed)",
+     xlab="log of XXX")
+```
+Now we can combine the data with a new dataframe which will have both original data columns AND unskewed data columns.
+```{r, results="hide"}
+#add_column comes from the tibble package
+loan_predictors7skewComposite <- add_column(loan_predictors6, delinq2yr_unskewed, .after="delinq2yr")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, inq6mth_unskewed, .after="inq6mth")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, openAcc_unskewed, .after="openAcc")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, pubRec_unskewed, .after="pubRec")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalAcc_unskewed, .after="totalAcc")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalBal_unskewed, .after="totalBal")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalRevLim_unskewed, .after="totalRevLim")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, accOpen24_unskewed, .after="accOpen24")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, avgBal_unskewed, .after="avgBal")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, bcOpen_unskewed, .after="bcOpen")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalLim_unskewed, .after="totalLim")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalRevBal_unskewed, .after="totalRevBal")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalBcLim_unskewed, .after="totalBcLim")
+loan_predictors7skewComposite <- add_column(loan_predictors7skewComposite, totalIlLim_unskewed, .after="totalIlLim")
+
+#check the summary to ensure all cols were added
+summary(loan_predictors7skewComposite)
+```
+Looks like they were all added correctly in the latest dataframe "loan_predictors7skewComposite". This will keep all the dataframes separate in case we need to go back in the history and use a different iteration without undoing all the work completed to this point. This may seem like unnecessary work but when performing logarithmic regression its best to have as many variables as possible to settle on the best combination of variables. 
+
+#Part1 - Section 4, Bullet 2
+We'll start by exploring relationships graphically between status2 and income...
+```{r, fig.show='hide'}
+income_status2bp <- ggplot(loan_predictors6, aes(x=status2, y=income_unskewed,fill=status2))+
+  geom_boxplot(aes(fill = status2)) +
+  theme_classic() +
+  theme(legend.position = "top")+
+  scale_fill_manual(values=c("#F21A00", "#78B7C5"))
+
+income_status2bp
+```
+Very interesting that income seems almost exactly the same for good and bad loans (good loans have *slightly* higher-paid borrowers).
+```{r, fig.show='hide'}
+income_gradebp <- ggplot(loan_predictors6, aes(x=grade, y=log(income),fill=grade))+
+  geom_boxplot(aes(fill = grade)) +
+  theme_classic() +
+  theme(legend.position = "top")+
+  scale_fill_manual(values = wes_palette("Zissou1", n = 7, type = "continuous"))
+income_gradebp
+```
+Again, income vs. loan grade seems almost distributed equally (with a *slight* downward trend from A to G).
+```{r}
+rateStatus2_bp <- ggplot(loan_predictors6, aes(x=status2, y=rate,fill=status2))+
+  geom_boxplot(aes(fill = status2)) +
+  theme_classic() +
+  theme(legend.position = "none")+
+  xlab("Loan Status")+
+  ylab("Rate")+
+  ggtitle("Loan Rate Comparison for Good and Bad Loans")+
+  scale_fill_manual(values=c("#F21A00", "#78B7C5"))
+rateStatus2_bp
+
+```
+Looks like a good loans tend to have lower rates, though this is likely an effect of having better credit
+
+```{r, echo=FALSE}
+#explore amount of credit checks in the last 6months for good vs bad loans
+badLoans <- which(loan_predictors6$status2 == "Bad")
+inq6mth_bad <- loan_predictors6$inq6mth[badLoans]
+# inq6mth_bad
+mean(inq6mth_bad) #test print
+# badLoans[1:100] #test print
+
+goodLoans <- which(loan_predictors6$status2 == "Good")
+inq6mth_good <- loan_predictors6$inq6mth[goodLoans]
+mean(inq6mth_good)
+
+```
+Seems that bad loans have had slightly higher mean number of credit checks in the last 6 months.
+```{r}
+df_homestatus2 <- data.frame(loan_predictors6$status2,loan_predictors6$home)
+ggplot(df_homestatus2,aes(loan_predictors6$status2, ..count..))+
+  geom_bar(aes(fill=loan_predictors6$home), position = "dodge")+
+  labs(fill="Home Ownership")+
+  xlab("Loan Status")+
+  ylab("Counts")+
+  ggtitle("Home Ownership Comparison for Good and Bad Loans")+
+  scale_fill_manual(values = wes_palette("Zissou1", n = 3))+
+  geom_hline(yintercept=3500, linetype="dashed", color = "#F21A00")+
+  geom_hline(yintercept=10325, linetype="dashed", color = "#F21A00")
+ 
+  
+```
+Note that for Good loans the Mortage rate is much higher than renting whereas, with Bad loans it's actually slightly lower than renting. This is an indicator of a potential correlation between having a mortgage and being a good borrower candidate.
+
+
+#----------------------------------------
+#  PART 2 - Section 5, Bullet 1 ########
+#▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼
+ 
+ 
+First we'll add a column of dummy variables to represent Good and Bad loans: Good = 1 and Bad = 0
+```{r}
+#we'll use mutate to create the dataframe we want for the predictors
+loan_predictors8 <- loan_predictors7skewComposite %>%
+  #conditionals for assignment to dummy variables
+  mutate(status3= ifelse(status2 == "Good",as.integer(1),as.integer(0)))%>%
+  select(1:status2, status3, everything()) #puts status2 col next to old status col for easy comparison
+
+# loan_predictors8[12:13] #test print
+```
+
+
+```{r, results="hide"}
+#create training data frames
+
+#samples random 80% rows from latest data frame
+set.seed(789) #set random seed for reproducibility
+rand80 <- sample(nrow(loan_predictors8), size = round(0.8*nrow(loan_predictors8)))
+rand80[1:10]
+
+#separates into 80% training data frame
+df80training <- loan_predictors8[rand80,]
+#next we'll remove totalPaid column from the training data
+df80training <- df80training %>%
+select(-status2, -status, -totalPaid)
+
+df80training
+
+#stores the remaining 20% in the test data frame
+df20test <- loan_predictors8[-rand80,]
+df20test
+
+
+```
+
+
+
+#  PART 2 - Section 5, Bullet 2
+
+```{r, warning=FALSE, results="hide"}
+#fit model with all predictors
+loan.out.all <- glm(status3~., data=df80training, family=binomial) 
+summary(loan.out.all) #summary to look at data
+
+#fit null model
+loan.null <- lm(status3~1, data=df80training) #when stepping forward this creates the minimal null model (zero predictors)
+
+#forward stepwise procedure
+step(loan.null,scope=list(lower=loan.null,upper=loan.out.all),direction="forward")
+```
+```{r, results="hide"}
+#final model
+loan.out.final <- glm(status3 ~ grade + term + debtIncRat + totalLim_unskewed + 
+    accOpen24 + state + home + length + revolRatio + delinq2yr + 
+    totalAcc + payment + amount + totalRevLim_unskewed + openAcc + 
+    inq6mth_unskewed + totalRevBal_unskewed + totalBal_unskewed + 
+    accOpen24_unskewed + bcOpen_unskewed + totalIlLim_unskewed +
+    inq6mth, data = df20test, family = "binomial")
+summary(loan.out.final)
+```
+Hosmer-Lemeshow GOF Test for final model:
+```{r, warning=FALSE, message=FALSE}
+library(ResourceSelection) #load library so HL test works
+hoslem.test(df20test$status3, fitted(loan.out.final), g=10)
+```
+
+#  PART 2 - Section 5, Bullet 3
+```{r}
+#predicted probabilities using the fitted model
+testprobs <- predict(loan.out.final, df20test, type="response") #probabilities 
+# testprobs[1:25] #test print
+```
+
+
+```{r}
+#validation of logistic regeression model
+# predprob.loans <- fitted(loan.out) # get predicted probabilities(alternate way)
+# predprob.loans
+threshold.loans <- .5  # Set Y=1 when predicted probability exceeds this
+predLoans <- cut(testprobs, breaks=c(-Inf, threshold.loans, Inf), 
+                labels=c("Bad", "Good"))  # Y=1 is "Good" here
+
+classifTable <- table(df20test$status3, predLoans) 
+addmargins(classifTable)
+
+pred <- sum(diag(classifTable)) / sum(classifTable)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', pred)) 
+
+```
+
+#  PART 2 - Section 6, Bullet 1
+Sub in series of thresholds to find maximum "correctly predicted"
+```{r}
+classThresh <- seq(0,1,by=0.1)
+classThresh
+```
+
+Classification Table created based on threshold (below code chunk)
+```{r}
+#didn't create a code block for each threshold in interest of saving space (changed threshold each time to coincide with classThresh then ran code and copied in below vector correctPreds_Accuracy)
+threshold.accuracy <- .7  # Set Y=1 when predicted probability exceeds this
+predAccuracy <- cut(testprobs, breaks=c(-Inf, threshold.accuracy, Inf), 
+                labels=c("Bad", "Good"))  # Y=1 is "Good" here
+
+classifTable_accuracy <- table(df20test$status3, predAccuracy) 
+addmargins(classifTable_accuracy)
+
+predAcc <- sum(diag(classifTable_accuracy)) / sum(classifTable_accuracy)  # compute the proportion of correct classifications
+print(paste('Proportion correctly predicted = ', predAcc)) 
+```
+*Drill down and explain effects on good/bad loans separately with graph*
+```{r}
+#create error/true-ness vectors vs. threshold (using above table)
+Type1err <-c(0,0,0,33,54,161,442,1038,2107,3759,5358)
+Type2err <- c(1500,1500,1500,1473,1411,1291,1080,766,395,99,0)
+trueGood <- c(5358,5358,5358,5352,5304,5197,4916,4320,3251,1599,0)
+trueBad <- c(0,0,0,27,89,209,420,734,1105,1401,1500)
+
+dferr <- data.frame(threshold=classThresh, Type1err,Type2err)
+# row.names(dferr) <- classThresh
+dferr
+
+#using above predicted accuracy table, this is the resulting vector of correctly predicted values from the corresponding probabilities
+correctPreds_Accuracy <- c(0.781277340332458, 0.781277340332458, 0.781277340332458,
+                  0.784339457567804, 0.786380869058034, 0.78827646544182,
+                  0.778069407990668, 0.73694954797317, 0.635170603674541,
+                  0.437445319335083, 0.218722659667542)
+```
+
+*good/bad loans graphed separately*
+```{r}
+#create line plot to display error
+plot(classThresh, Type1err, type="b", frame=FALSE, pch=19, cex=1.5,
+     lwd=2, col="#F21A00", xlab="Threshold", ylab="Number of Loans Accepted",
+     main="Effects of Threshold on Error Type", ylim=c(0,6000),
+     panel.first={grid()})
+
+#add Type II error line
+lines(classThresh, Type2err, type="b", pch=19, cex=1.5,
+     lwd=2, col="#E8C31E", xlab="Threshold", ylab="Number of Loans")
+legend(x=.1, y=4400, legend=c("Type I Error", "Type II Error"),
+       col=c("#F21A00", "#E8C31E"), lty=1, cex=1.2, lwd=2)
+axis(1,at = seq(0, 1, by = .1))
+ 
+```
+```{r}
+#create plot showing good and bad loans
+plot(classThresh, trueBad, type="b", frame=FALSE, pch=19, cex=1.5,
+     lwd=2, col="#3B9AB2", xlab="Threshold", ylab="Number of Loans Accepted",
+     main="Effects of Threshold on Good/Bad Loans", ylim=c(0, 6000),
+     panel.first={grid()})
+#add good loans captured as good
+lines(classThresh, trueGood, type="b", pch=19, cex=1.5,
+     lwd=2, col="#B1C177", xlab="Threshold", ylab="Number of Loans")
+legend(x=.1, y=3500, legend=c("True Bad Loans", "True Good Loans"),
+       col=c("#3B9AB2", "#B1C177"), lty=1, cex=1.2, lwd=2)
+axis(1,at = seq(0, 1, by = .1))
+
+        
+```
+
+*accuracy table data*
+```{r}
+#create accuracy table from calculated accuracies at each threshold
+accuracyTable <- data.frame("threshold"= classThresh, "correctlyPredicted"= correctPreds_Accuracy)
+accuracyTable
+```
+Now we can plot the two: Accuracies vs Threshold
+```{r}
+barplot(accuracyTable$correctlyPredicted,
+        names.arg=accuracyTable$threshold,
+        xlab="Threshold",
+        ylab="Proportion Correctly Predicted",
+        main="Accuracy vs. Threshold",
+        ylim=c(0,0.8),
+        col=c("#78B7C5", "#78B7C5","#78B7C5","#3B9AB2",
+              "#3B9AB2", "#3B9AB2", "#78B7C5","#b1c177",
+              "#E1AF00", "#E86F00", "#F21A00"))
+
+```
+
+#  PART 2 - Section 7, Bullet 1
+Apply same method to maximize profit
+```{r, results="hide"}
+#create a new data frame with the predicted probabilities from the test data
+df20testProfit <- data.frame("predictedProbs"=testprobs)
+df20testProfit #test print
+
+```
+
+```{r, results="hide"}
+#add needed cols to data frame
+df20testProfit$status3 <- df20test$status3
+df20testProfit$totalPaid <- df20test$totalPaid
+df20testProfit$amount <- df20test$amount
+
+#create profit col in data frame
+df20testProfit$profit <- df20testProfit$totalPaid - df20testProfit$amount
+df20testProfit #test print
+```
+Next we'll put a conditional in to tally the profit if probability is above given threshold
+```{r, results="hide"}
+#toggle threshold to adjust loans to keep
+profitThresh <- filter(df20testProfit, predictedProbs > .7)
+#didn't create a code block for each threshold in interest of saving space (changed threshold to coincide with classThresh then ran code and copied in below vector correctPreds_Profit)
+# profitThresh #test print
+
+```
+
+```{r}
+#double check no vals under profit threshold
+min(profitThresh$predictedProbs) #test print to ensure no values lower than threshold
+
+#sum all profit above profit threshold
+sum(profitThresh$profit)
+```
+
+From above two code blocks create profit table
+```{r}
+#using above code, this is the resulting vector of profit from the corresponding thresholds
+correctPreds_Profit <- c(1789901, 1789901, 1789901,
+                  1998812, 2285836, 2893150,
+                  3673684, 4011922, 3504955,
+                  1885314, 0)
+
+profitTable <- data.frame("threshold"= classThresh, "profit"= correctPreds_Profit,
+                          "profitMil"=correctPreds_Profit/1000000) #add profit in millions for clarity
+profitTable
+```
+
+Now we can plot the two: Profit vs Threshold
+```{r}
+barplot(profitTable$profitMil,
+        names.arg=profitTable$threshold,
+        xlab="Threshold",
+        ylab="Profit (in Millions of $)",
+        main="Profit vs. Threshold",
+        col=c("#F21A00", "#F21A00","#F21A00","#E86F00",
+              "#E8C31E", "#B1C177", "#88BAAE","#3B9AB2",
+              "#88BAAE", "#F24A01", "#F21A00"))
+```
+Next we'll put the two graphs together for final report comparisons
+```{r,fig.width=12, fig.height=5, fig.show='hide', echo=FALSE}
+par(mfrow=c(1,2),mar=c(5,5,3,1)) #grid containers for plots
+#Accuracy vs. Threshold Plot
+barplot(accuracyTable$correctlyPredicted,
+        names.arg=accuracyTable$threshold,
+        xlab="Threshold",
+        ylab="Proportion Correctly Predicted",
+        main="Accuracy vs. Threshold",
+        ylim=c(0,0.8),
+        col=c("#78B7C5", "#78B7C5","#78B7C5","#3B9AB2",
+              "#3B9AB2", "#3B9AB2", "#78B7C5","#b1c177",
+              "#E1AF00", "#E86F00", "#F21A00"))
+
+#Profit vs Threshold plot
+barplot(profitTable$profitMil,
+        names.arg=profitTable$threshold,
+        xlab="Threshold",
+        ylab="Profit (in Millions of $)",
+        main="Profit vs. Threshold",
+        col=c("#F21A00", "#F21A00","#F21A00","#E86F00",
+              "#E8C31E", "#B1C177", "#88BAAE","#3B9AB2",
+              "#88BAAE", "#F24A01", "#F21A00"))
+
+```
+At threshold of 0.7 we have a high type II error (accepting about as many actual bad loans as rejecting), but making the most profit.
+
+Create model that denies all truly bad loans (and accepts only good loans) to compare a perfect model
+```{r}
+trulyGood <- filter(df20testProfit, status3 == 1)
+# trulyGood #test print to see data
+
+# min(trulyGood$profit) #test print to see lowest profit
+sum(trulyGood$profit)
+```
+Profit of bank without model.
+```{r}
+nomodelProfit <- sum(df20testProfit$profit)
+nomodelProfit
+```
+#Part 3 - Graph for Executive Summary
+
+```{r,fig.width=9, fig.height=4.5, results='hide'}
+
+#test prints
+# correctPreds_Accuracy[1]
+# profitTable$profit[8]/nomodelProfit
+
+#create data frame for Exec Summary df
+ExSum <- data.frame("model"=c("Current Method", "Final Model"),
+                    "percentProfit"=c(100, (profitTable$profit[8]/nomodelProfit)*100),
+                    "badAwarded"=c(1500,766),
+                    "goodAwarded"=c(5358,4320),
+                    "loansAwarded"=c(6858, 5086),
+                    "percentBad"=c(21.87,15.06),
+                    "percentGood"=c(78.13,84.94),
+                    "percentAccuracy"=c(correctPreds_Accuracy[1],correctPreds_Accuracy[8]))
+ExSum
+
+#Easy-to-understand graphs
+par(mfrow=c(1,2),mar=c(5,5,3,1)) #grid containers for plots
+
+#profit increase from model
+barplot(ExSum$percentProfit, ylab="% Profit",
+        names.arg=c("Current Loan\nMethod", "Final Model"),
+        main="% Profit Increase from Final Model",
+        ylim=c(0,250), col=c("#E8C31E", "#3B9AB2"))
+
+#total loans awarded from model
+#rework df to show number of loans
+loanDat <- matrix(c(1500, 766, 5358, 4320),ncol=2,byrow=TRUE)
+colnames(loanDat) <- c("Current Loan Method","Final Model")
+rownames(loanDat) <- c("Bad Loans Awarded","Good Loans Awarded")
+loanDat <- as.table(loanDat)
+loanDat
+
+#make stacked plot
+barplot(loanDat[1,], col=c("#E86F00", "darkslategrey"), axisnames=T,ylim = c(0,7000),
+        main="Difference in Good/Bad\nLoans Awarded", ylab="Loans Awarded")
+barplot(loanDat[2,], offset=loanDat[1,], add=T, axes=F, axisnames=F, col=c("#E1AF00", "#3B9AB2"))
+text(.71,4100,"Good Loans\n(78%)", col="darkgoldenrod4", font=2)
+text(.71,750,"Bad Loans\n(22%)", col="goldenrod1", font=2)
+text(1.91,3000,"Good Loans\n(85%)", col="lightblue1", font=2)
+text(1.91,410,"Bad Loans (15%)", col="lightblue1", font=2, cex=.9)
+
+```
+
+
+
+
+
